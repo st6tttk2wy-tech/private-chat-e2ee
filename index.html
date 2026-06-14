@@ -78,8 +78,9 @@ textarea.input{resize:vertical;min-height:80px;font-family:monospace;font-size:1
     </div>
     <div id="tab-join" style="display:none">
       <p style="font-size:14px;color:var(--text2);margin-bottom:16px;text-align:left">粘贴对方发来的邀请链接或邀请码。</p>
-      <textarea class="input" id="joinInput" placeholder="粘贴邀请链接或邀请码..."></textarea>
+      <textarea class="input" id="joinInput" placeholder="粘贴邀请链接或邀请码..." style="min-height:80px"></textarea>
       <button class="btn btn-primary" onclick="joinRoom()" style="margin-top:10px">加入房间</button>
+      <p id="joinError" style="color:var(--danger);font-size:12px;margin-top:8px;display:none"></p>
     </div>
   </div>
 </div>
@@ -353,8 +354,10 @@ function showRawInvite() {
 }
 
 async function joinRoom() {
-  console.log('joinRoom called');
   let input = document.getElementById('joinInput').value.trim();
+  const errorEl = document.getElementById('joinError');
+  if (errorEl) errorEl.style.display = 'none';
+
   if (!input) { showToast('请粘贴邀请信息'); return; }
 
   if (input.includes('#i=')) {
@@ -363,7 +366,9 @@ async function joinRoom() {
 
   const parts = input.split('.');
   if (parts.length !== 3) {
-    showToast('邀请信息格式错误');
+    const msg = '邀请信息格式错误，请确保复制完整链接';
+    showToast(msg);
+    if (errorEl) { errorEl.textContent = msg; errorEl.style.display = 'block'; }
     return;
   }
 
@@ -384,22 +389,24 @@ async function joinRoom() {
   };
   pc.oniceconnectionstatechange = () => {
     console.log('ICE state:', pc.iceConnectionState);
-    if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') onDisconnected();
+    if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+      const msg = '连接失败，请检查网络或重试';
+      showToast(msg);
+      if (errorEl) { errorEl.textContent = msg; errorEl.style.display = 'block'; }
+    }
   };
 
   try {
     console.log('Decrypting offer...');
     const compressedSDP = await decryptAES(encryptedOffer, sharedSecret);
-    console.log('Compressed SDP length:', compressedSDP.length);
-    console.log('Compressed SDP end:', compressedSDP.substring(compressedSDP.length - 100));
     const sdp = decompressSDP(compressedSDP);
-    console.log('Decompressed SDP length:', sdp.length);
-    console.log('Decompressed SDP lines:', sdp.split('\r\n').length);
     await pc.setRemoteDescription(new RTCSessionDescription({type: 'offer', sdp: sdp}));
     console.log('Remote description set');
   } catch(e) {
     console.error('Error:', e);
-    showToast('解密失败，请检查邀请码');
+    const msg = '解密失败，请检查邀请码是否完整';
+    showToast(msg);
+    if (errorEl) { errorEl.textContent = msg; errorEl.style.display = 'block'; }
     return;
   }
 
@@ -581,9 +588,16 @@ function showBurnInfo() { showToast('阅后即焚：消息阅读后自动销毁'
 window.addEventListener('load', () => {
   const hash = location.hash;
   if (hash.startsWith('#i=')) {
-    document.getElementById('joinInput').value = hash.substring(3);
-    showTab('join');
-    joinRoom();
+    const inviteData = hash.substring(3);
+    if (inviteData.length > 10) {
+      document.getElementById('joinInput').value = inviteData;
+      showTab('join');
+      setTimeout(() => {
+        joinRoom();
+      }, 500);
+    } else {
+      showToast('邀请链接无效，请手动输入邀请码');
+    }
   }
 });
 
