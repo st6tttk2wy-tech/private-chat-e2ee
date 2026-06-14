@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>私密聊天</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0a0f;--surface:#12121a;--surface2:#1a1a25;--border:#2a2a3a;
+  --primary:#6c5ce7;--primary-hover:#7c6cf7;--danger:#e74c3c;
+  --text:#e0e0e0;--text2:#8888a0;--success:#2ecc71;--warn:#f39c12;
+}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.screen{display:none;width:100%;max-width:600px;padding:20px}
+.screen.active{display:flex;flex-direction:column;align-items:center}
+h1{font-size:28px;margin-bottom:8px;background:linear-gradient(135deg,var(--primary),#a29bfe);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.subtitle{color:var(--text2);margin-bottom:40px;font-size:14px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px;width:100%;margin-bottom:16px}
+.btn{width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;margin-bottom:10px;color:#fff}
+.btn-primary{background:var(--primary)}
+.btn-primary:hover{background:var(--primary-hover);transform:translateY(-1px)}
+.btn-danger{background:var(--danger)}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
+.btn-outline:hover{border-color:var(--primary);color:var(--primary)}
+.btn-sm{padding:8px 16px;width:auto;font-size:13px;border-radius:8px}
+.input-group{margin-bottom:16px;text-align:left}
+.input-group label{display:block;font-size:13px;color:var(--text2);margin-bottom:6px}
+.input{width:100%;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;outline:none;transition:border .2s}
+.input:focus{border-color:var(--primary)}
+textarea.input{resize:vertical;min-height:80px;font-family:monospace;font-size:12px}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:500}
+.badge-green{background:rgba(46,204,113,.15);color:var(--success)}
+.badge-red{background:rgba(231,76,60,.15);color:var(--danger)}
+.badge-yellow{background:rgba(243,156,18,.15);color:var(--warn)}
+.chat-container{width:100%;max-width:600px;height:calc(100vh - 40px);display:flex;flex-direction:column}
+.chat-header{padding:16px 20px;background:var(--surface);border:1px solid var(--border);border-radius:12px 12px 0 0;display:flex;justify-content:space-between;align-items:center}
+.chat-header h2{font-size:16px}
+.chat-messages{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:75%;padding:12px 16px;border-radius:16px;font-size:14px;line-height:1.5;position:relative;animation:fadeIn .3s}
+.msg-in{align-self:flex-start;background:var(--surface2);border-bottom-left-radius:4px}
+.msg-out{align-self:flex-end;background:var(--primary);border-bottom-right-radius:4px}
+.msg-burn{opacity:0;max-height:0;padding:0;margin:0;border:none;overflow:hidden;transition:all .5s}
+.msg .time{font-size:11px;color:rgba(255,255,255,.4);margin-top:4px}
+.msg-in .time{color:var(--text2)}
+.msg .burn-icon{position:absolute;top:8px;right:8px;font-size:10px;opacity:.5}
+.chat-input{padding:16px 20px;background:var(--surface);border:1px solid var(--border);border-radius:0 0 12px 12px;display:flex;gap:10px}
+.chat-input input{flex:1;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;outline:none}
+.chat-input input:focus{border-color:var(--primary)}
+.chat-input button{padding:12px 20px;background:var(--primary);border:none;border-radius:10px;color:#fff;font-weight:600;cursor:pointer}
+.step{display:flex;align-items:center;gap:12px;margin-bottom:20px;padding:16px;background:var(--surface2);border-radius:10px}
+.step-num{width:32px;height:32px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0}
+.step-text{font-size:14px;line-height:1.5}
+.step-text strong{color:var(--primary)}
+.code-box{background:#000;padding:12px;border-radius:8px;font-family:monospace;font-size:11px;color:var(--success);word-break:break-all;max-height:120px;overflow-y:auto;margin:10px 0;border:1px solid var(--border)}
+.emoji-big{font-size:48px;margin-bottom:16px}
+.status-bar{display:flex;align-items:center;gap:8px;padding:8px 16px;background:var(--surface);border-radius:8px;margin-bottom:12px;font-size:13px}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.pulsing{animation:pulse 1.5s infinite}
+.copy-hint{font-size:12px;color:var(--text2);margin-top:8px}
+.tab-bar{display:flex;gap:8px;margin-bottom:16px;width:100%}
+.tab{flex:1;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;text-align:center;cursor:pointer;font-size:14px;transition:all .2s}
+.tab.active{border-color:var(--primary);color:var(--primary);background:rgba(108,92,231,.1)}
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:var(--success);color:#fff;padding:12px 24px;border-radius:10px;font-size:14px;z-index:999;animation:fadeIn .3s}
+.warning-box{background:rgba(231,76,60,.1);border:1px solid rgba(231,76,60,.3);border-radius:10px;padding:16px;margin:16px 0;font-size:13px;color:var(--danger);text-align:left}
+</style>
+</head>
+<body>
+
+<div id="screen-landing" class="screen active">
+  <div class="emoji-big">&#128274;</div>
+  <h1>私密聊天</h1>
+  <p class="subtitle">端到端加密 | 阅后即焚 | 仅邀请使用</p>
+  <div class="card">
+    <div class="tab-bar">
+      <div class="tab active" onclick="showTab('create')">创建房间</div>
+      <div class="tab" onclick="showTab('join')">加入房间</div>
+    </div>
+    <div id="tab-create">
+      <p style="font-size:14px;color:var(--text2);margin-bottom:16px;text-align:left">创建一个加密聊天房间，生成邀请链接发送给对方。</p>
+      <button class="btn btn-primary" onclick="createRoom()">创建房间</button>
+    </div>
+    <div id="tab-join" style="display:none">
+      <div class="input-group">
+        <label>粘贴邀请链接或房间ID</label>
+        <textarea class="input" id="joinInput" placeholder="粘贴收到的邀请信息..."></textarea>
+      </div>
+      <button class="btn btn-primary" onclick="joinRoom()">加入房间</button>
+    </div>
+  </div>
+</div>
+
+<div id="screen-wait" class="screen">
+  <div class="emoji-big">&#128276;</div>
+  <h1>等待连接</h1>
+  <p class="subtitle" id="roomStatus">房间已创建，正在等待对方加入...</p>
+  <div class="card">
+    <div class="status-bar">
+      <span class="badge badge-green pulsing">&#9679; 等待中</span>
+    </div>
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-text">将以下<strong>邀请信息</strong>发送给对方</div>
+    </div>
+    <textarea class="input" id="inviteCode" readonly style="min-height:100px;font-family:monospace;font-size:11px"></textarea>
+    <button class="btn btn-outline" onclick="copyText('inviteCode')" style="margin-top:8px">复制邀请信息</button>
+    <div class="copy-hint">&#128161; 对方加入后，将生成的连接代码粘贴到下方</div>
+    <div class="step" style="margin-top:16px">
+      <div class="step-num">2</div>
+      <div class="step-text">粘贴对方返回的<strong>连接代码</strong></div>
+    </div>
+    <textarea class="input" id="remoteAnswer" placeholder="等待对方发送连接代码..."></textarea>
+    <button class="btn btn-primary" onclick="connectAsHost()" style="margin-top:8px">建立连接</button>
+    <button class="btn btn-outline btn-sm" onclick="goLanding()" style="margin-top:8px">取消</button>
+  </div>
+</div>
+
+<div id="screen-join" class="screen">
+  <div class="emoji-big">&#128279;</div>
+  <h1>加入房间</h1>
+  <p class="subtitle">正在建立安全连接...</p>
+  <div class="card">
+    <div class="status-bar">
+      <span class="badge badge-yellow pulsing">&#9679; 连接中</span>
+    </div>
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-text">已解析邀请信息，正在生成密钥...</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-text">将以下<strong>连接代码</strong>发送给房间创建者</div>
+    </div>
+    <textarea class="input" id="joinAnswer" readonly style="min-height:100px;font-family:monospace;font-size:11px"></textarea>
+    <button class="btn btn-outline" onclick="copyText('joinAnswer')" style="margin-top:8px">复制连接代码</button>
+    <div class="copy-hint">&#9203; 等待创建者确认连接...</div>
+    <button class="btn btn-outline btn-sm" onclick="goLanding()" style="margin-top:12px">取消</button>
+  </div>
+</div>
+
+<div id="screen-chat" class="screen" style="padding:0;height:100vh">
+  <div class="chat-container">
+    <div class="chat-header">
+      <div>
+        <h2>&#128274; 私密聊天</h2>
+        <span class="badge badge-green" style="margin-top:4px">&#9679; 已加密连接</span>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="showBurnInfo()">&#128293; 阅后即焚</button>
+        <button class="btn btn-outline btn-sm" onclick="disconnectChat()">&#128682; 断开</button>
+      </div>
+    </div>
+    <div class="chat-messages" id="chatMessages"></div>
+    <div class="chat-input">
+      <input type="text" id="msgInput" placeholder="输入消息（阅后即焚模式）..." onkeydown="if(event.key==='Enter')sendMessage()">
+      <button onclick="sendMessage()">&#10148;</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" style="display:none"></div>
+
+<script>
+const STUN_SERVERS = {
+  iceServers: [
+    {urls: 'stun:stun.l.google.com:19302'},
+    {urls: 'stun:stun1.l.google.com:19302'},
+    {urls: 'stun:stun2.l.google.com:19302'}
+  ]
+};
+
+let pc = null;
+let dc = null;
+let isHost = false;
+let roomKey = null;
+let sharedSecret = null;
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+}
+
+function showTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab')[tab === 'create' ? 0 : 1].classList.add('active');
+  document.getElementById('tab-create').style.display = tab === 'create' ? 'block' : 'none';
+  document.getElementById('tab-join').style.display = tab === 'join' ? 'block' : 'none';
+}
+
+function goLanding() {
+  if (pc) { pc.close(); pc = null; }
+  if (dc) { dc = null; }
+  showScreen('landing');
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 2500);
+}
+
+function copyText(id) {
+  const el = document.getElementById(id);
+  el.select();
+  document.execCommand('copy');
+  showToast('已复制到剪贴板');
+}
+
+function generateRoomId() {
+  const arr = new Uint8Array(16);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function generateSecret() {
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function encryptAES(data, key) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(key), 'PBKDF2', false, ['deriveKey']);
+  const derivedKey = await crypto.subtle.deriveKey(
+    {name: 'PBKDF2', salt: enc.encode('privatechat-salt'), iterations: 100000, hash: 'SHA-256'},
+    keyMaterial, {name: 'AES-GCM', length: 256}, false, ['encrypt']
+  );
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({name: 'AES-GCM', iv}, derivedKey, enc.encode(data));
+  return JSON.stringify({iv: Array.from(iv), data: Array.from(new Uint8Array(encrypted))});
+}
+
+async function decryptAES(encStr, key) {
+  const {iv, data} = JSON.parse(encStr);
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(key), 'PBKDF2', false, ['deriveKey']);
+  const derivedKey = await crypto.subtle.deriveKey(
+    {name: 'PBKDF2', salt: enc.encode('privatechat-salt'), iterations: 100000, hash: 'SHA-256'},
+    keyMaterial, {name: 'AES-GCM', length: 256}, false, ['decrypt']
+  );
+  const decrypted = await crypto.subtle.decrypt({name: 'AES-GCM', iv: new Uint8Array(iv)}, derivedKey, new Uint8Array(data));
+  return dec.decode(decrypted);
+}
+
+async function createRoom() {
+  const roomId = generateRoomId();
+  sharedSecret = generateSecret();
+  roomKey = roomId + sharedSecret;
+
+  const inviteInfo = JSON.stringify({
+    type: 'privatechat-invite',
+    version: 1,
+    roomId: roomId,
+    secret: sharedSecret,
+    timestamp: Date.now()
+  });
+
+  isHost = true;
+  pc = new RTCPeerConnection(STUN_SERVERS);
+
+  dc = pc.createDataChannel('chat', {ordered: true});
+  dc.onmessage = (e) => handleRemoteMessage(e.data);
+  dc.onopen = () => onConnected();
+  dc.onclose = () => onDisconnected();
+
+  pc.onicecandidate = () => {};
+  pc.oniceconnectionstatechange = () => {
+    if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+      onDisconnected();
+    }
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  await new Promise(resolve => {
+    if (pc.iceGatheringState === 'complete') return resolve();
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === 'complete') resolve();
+    };
+    setTimeout(resolve, 5000);
+  });
+
+  const encryptedOffer = await encryptAES(JSON.stringify(pc.localDescription), sharedSecret);
+  const inviteData = JSON.stringify({
+    type: 'privatechat-invite',
+    version: 1,
+    roomId: roomId,
+    secret: sharedSecret,
+    offer: encryptedOffer,
+    timestamp: Date.now()
+  });
+
+  document.getElementById('inviteCode').value = inviteData;
+  showScreen('wait');
+}
+
+async function joinRoom() {
+  const input = document.getElementById('joinInput').value.trim();
+  if (!input) { showToast('请粘贴邀请信息'); return; }
+
+  let inviteData;
+  try {
+    inviteData = JSON.parse(input);
+  } catch(e) {
+    showToast('邀请信息格式错误');
+    return;
+  }
+
+  if (inviteData.type !== 'privatechat-invite') {
+    showToast('无效的邀请信息');
+    return;
+  }
+
+  sharedSecret = inviteData.secret || generateSecret();
+  isHost = false;
+
+  pc = new RTCPeerConnection(STUN_SERVERS);
+
+  pc.ondatachannel = (e) => {
+    dc = e.channel;
+    dc.onmessage = (ev) => handleRemoteMessage(ev.data);
+    dc.onopen = () => onConnected();
+    dc.onclose = () => onDisconnected();
+  };
+
+  pc.onicecandidate = () => {};
+  pc.oniceconnectionstatechange = () => {
+    if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+      onDisconnected();
+    }
+  };
+
+  try {
+    const decryptedOffer = await decryptAES(inviteData.offer, sharedSecret);
+    const offer = JSON.parse(decryptedOffer);
+    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+  } catch(e) {
+    showToast('解密邀请信息失败，请检查密钥');
+    return;
+  }
+
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+
+  await new Promise(resolve => {
+    if (pc.iceGatheringState === 'complete') return resolve();
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === 'complete') resolve();
+    };
+    setTimeout(resolve, 5000);
+  });
+
+  const encryptedAnswer = await encryptAES(JSON.stringify(pc.localDescription), sharedSecret);
+  const answerData = JSON.stringify({
+    type: 'privatechat-answer',
+    version: 1,
+    answer: encryptedAnswer,
+    timestamp: Date.now()
+  });
+
+  document.getElementById('joinAnswer').value = answerData;
+  showScreen('join');
+}
+
+async function connectAsHost() {
+  const input = document.getElementById('remoteAnswer').value.trim();
+  if (!input) { showToast('请粘贴连接代码'); return; }
+
+  let answerData;
+  try {
+    answerData = JSON.parse(input);
+  } catch(e) {
+    showToast('连接代码格式错误');
+    return;
+  }
+
+  try {
+    const decryptedAnswer = await decryptAES(answerData.answer, sharedSecret);
+    const answer = JSON.parse(decryptedAnswer);
+    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+  } catch(e) {
+    showToast('解密连接代码失败');
+    return;
+  }
+}
+
+function onConnected() {
+  showScreen('chat');
+  addSystemMessage('安全连接已建立，消息端到端加密');
+  addSystemMessage('阅后即焚已启用，消息阅读后自动销毁');
+}
+
+function onDisconnected() {
+  addSystemMessage('连接已断开');
+  showToast('对方已断开连接');
+}
+
+function addSystemMessage(text) {
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.style.cssText = 'text-align:center;font-size:12px;color:var(--text2);padding:8px;';
+  div.textContent = text;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function addChatMessage(text, isOutgoing) {
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'msg ' + (isOutgoing ? 'msg-out' : 'msg-in');
+  const time = new Date().toLocaleTimeString('zh-CN', {hour:'2-digit', minute:'2-digit'});
+  div.innerHTML = '<div class="burn-icon">&#128293;</div>' + escapeHtml(text) + '<div class="time">' + time + '</div>';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+
+  setTimeout(() => {
+    div.classList.add('msg-burn');
+    setTimeout(() => div.remove(), 600);
+  }, isOutgoing ? 5000 : 3000);
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+async function sendMessage() {
+  const input = document.getElementById('msgInput');
+  const text = input.value.trim();
+  if (!text || !dc || dc.readyState !== 'open') return;
+
+  try {
+    const encrypted = await encryptAES(text, sharedSecret);
+    dc.send(encrypted);
+    addChatMessage(text, true);
+    input.value = '';
+  } catch(e) {
+    showToast('发送失败');
+  }
+}
+
+async function handleRemoteMessage(rawData) {
+  try {
+    const decrypted = await decryptAES(rawData, sharedSecret);
+    addChatMessage(decrypted, false);
+  } catch(e) {
+    addSystemMessage('收到无法解密的消息');
+  }
+}
+
+function disconnectChat() {
+  if (dc) dc.close();
+  if (pc) pc.close();
+  pc = null;
+  dc = null;
+  sharedSecret = null;
+  showScreen('landing');
+  showToast('已断开连接');
+}
+
+function showBurnInfo() {
+  showToast('阅后即焚：消息阅读后自动销毁');
+}
+
+window.addEventListener('beforeunload', () => {
+  if (dc) dc.close();
+  if (pc) pc.close();
+});
+</script>
+</body>
+</html>
