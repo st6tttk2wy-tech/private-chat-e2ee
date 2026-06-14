@@ -197,29 +197,37 @@ function compressSDP(sdp) {
   const essential = [];
   
   for (const line of lines) {
-    if (line.startsWith('v=') || line.startsWith('o=') || line.startsWith('s=') || line.startsWith('t=')) {
+    if (line.startsWith('v=0')) {
+      continue;
+    } else if (line.startsWith('o=-')) {
       essential.push(line);
+    } else if (line.startsWith('s=')) {
+      continue;
+    } else if (line.startsWith('t=0 0')) {
+      continue;
     } else if (line.startsWith('m=')) {
       essential.push(line);
     } else if (line.startsWith('a=group:')) {
       essential.push(line);
     } else if (line.startsWith('a=mid:')) {
       essential.push(line);
-    } else if (line.startsWith('a=ice-ufrag:') || line.startsWith('a=ice-pwd:')) {
-      essential.push(line);
+    } else if (line.startsWith('a=ice-ufrag:')) {
+      essential.push('u:' + line.substring(12));
+    } else if (line.startsWith('a=ice-pwd:')) {
+      essential.push('p:' + line.substring(10));
     } else if (line.startsWith('a=fingerprint:')) {
-      essential.push(line);
+      essential.push('f:' + line.substring(14));
     } else if (line.startsWith('a=candidate:')) {
       const parts = line.substring(12).split(' ');
       if (parts[7] === 'host') {
         essential.push('c:' + parts.slice(0, 8).join(' '));
       }
     } else if (line.startsWith('a=setup:')) {
-      essential.push(line);
+      essential.push('k:' + line.substring(8));
     } else if (line.startsWith('a=sctp-port:')) {
-      essential.push(line);
+      essential.push('sp:' + line.substring(12));
     } else if (line.startsWith('a=max-message-size:')) {
-      essential.push(line);
+      essential.push('ms:' + line.substring(19));
     }
   }
   return essential.join(';');
@@ -228,9 +236,22 @@ function compressSDP(sdp) {
 function decompressSDP(compressed) {
   const lines = compressed.split(';').map(l => {
     if (l.startsWith('c:')) return 'a=candidate:' + l.substring(2);
+    if (l.startsWith('u:')) return 'a=ice-ufrag:' + l.substring(2);
+    if (l.startsWith('p:')) return 'a=ice-pwd:' + l.substring(2);
+    if (l.startsWith('f:')) return 'a=fingerprint:' + l.substring(2);
+    if (l.startsWith('k:')) return 'a=setup:' + l.substring(2);
+    if (l.startsWith('sp:')) return 'a=sctp-port:' + l.substring(3);
+    if (l.startsWith('ms:')) return 'a=max-message-size:' + l.substring(3);
     return l;
   });
-  return lines.join('\r\n') + '\r\n';
+  const result = ['v=0'];
+  for (const line of lines) {
+    result.push(line);
+    if (line.startsWith('o=')) {
+      result.push('s=-', 't=0 0');
+    }
+  }
+  return result.join('\r\n') + '\r\n';
 }
 
 function shortEncode(str) {
@@ -369,8 +390,11 @@ async function joinRoom() {
   try {
     console.log('Decrypting offer...');
     const compressedSDP = await decryptAES(encryptedOffer, sharedSecret);
+    console.log('Compressed SDP length:', compressedSDP.length);
+    console.log('Compressed SDP end:', compressedSDP.substring(compressedSDP.length - 100));
     const sdp = decompressSDP(compressedSDP);
-    console.log('SDP decompressed, setting remote description');
+    console.log('Decompressed SDP length:', sdp.length);
+    console.log('Decompressed SDP lines:', sdp.split('\r\n').length);
     await pc.setRemoteDescription(new RTCSessionDescription({type: 'offer', sdp: sdp}));
     console.log('Remote description set');
   } catch(e) {
@@ -448,8 +472,88 @@ function addChatMessage(text, isOutgoing) {
   div.innerHTML = '<div class="burn-icon">&#128293;</div>' + escapeHtml(text) + '<div class="time">' + time + '</div>';
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
-  setTimeout(() => { div.classList.add('msg-burn'); setTimeout(() => div.remove(), 600); }, isOutgoing ? 5000 : 3000);
+  
+  let burned = false;
+  const burnDelay = isOutgoing ? 5000 : 3000;
+  
+  const burnTimer = setTimeout(() => {
+    if (!burned && document.visibilityState === 'visible' && isElementInViewport(div)) {
+      burned = true;
+      div.classList.add('msg-burn');
+      setTimeout(() => div.remove(), 600);
+    } else if (!burned) {
+      delayedBurnTimers.push({element: div, delay: 2000});
+    }
+  }, burnDelay);
+  
+  if (!isOutgoing) {
+    unreadMessages.push({element: div, timer: burnTimer, delay: burnDelay, startTime: Date.now()});
+  }
 }
+
+let delayedBurnTimers = [];
+let unreadMessages = [];
+
+function isElementInViewport(el) {
+  const rect = el.getBoundingClientRect();
+  return rect.top >= 0 && rect.left >= 0 && rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) && rect.right <= (window.innerWidth || document.documentElement.clientWidth);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    processDelayedBurns();
+    processUnreadMessages();
+  }
+});
+
+window.addEventListener('focus', () => {
+  processDelayedBurns();
+  processUnreadMessages();
+});
+
+function processDelayedBurns() {
+  const now = Date.now();
+  delayedBurnTimers = delayedBurnTimers.filter(item => {
+    if (item.element && item.element.parentNode) {
+      item.delay -= 1000;
+      if (item.delay <= 0) {
+        item.element.classList.add('msg-burn');
+        setTimeout(() => item.element.remove(), 600);
+        return false;
+      }
+    }
+    return false;
+  });
+}
+
+function processUnreadMessages() {
+  const now = Date.now();
+  unreadMessages = unreadMessages.filter(item => {
+    if (item.element && item.element.parentNode && !item.element.classList.contains('msg-burn')) {
+      const elapsed = now - item.startTime;
+      if (elapsed >= item.delay) {
+        if (isElementInViewport(item.element)) {
+          item.element.classList.add('msg-burn');
+          setTimeout(() => item.element.remove(), 600);
+          return false;
+        }
+      }
+    }
+    return item.element && item.element.parentNode;
+  });
+}
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      const msg = unreadMessages.find(m => m.element === entry.target);
+      if (msg && !msg.observed) {
+        msg.observed = true;
+        msg.startTime = Date.now();
+      }
+    }
+  });
+}, {threshold: 0.1});
 
 function escapeHtml(text) { const d = document.createElement('div'); d.textContent = text; return d.innerHTML; }
 
@@ -469,6 +573,8 @@ async function handleRemoteMessage(rawData) {
   try {
     const decrypted = await decryptAES(rawData, sharedSecret);
     addChatMessage(decrypted, false);
+    const lastMsg = document.querySelector('.msg-in:last-child');
+    if (lastMsg) observer.observe(lastMsg);
   } catch(e) { addSystemMessage('收到无法解密的消息'); }
 }
 
