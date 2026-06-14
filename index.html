@@ -464,6 +464,15 @@ function addSystemMessage(text) {
   container.scrollTop = container.scrollHeight;
 }
 
+function getBurnDelay(text) {
+  const len = text.length;
+  if (len <= 10) return 3000;
+  if (len <= 30) return 5000;
+  if (len <= 60) return 8000;
+  if (len <= 100) return 12000;
+  return Math.min(20000, 3000 + len * 200);
+}
+
 function addChatMessage(text, isOutgoing) {
   const container = document.getElementById('chatMessages');
   const div = document.createElement('div');
@@ -472,88 +481,71 @@ function addChatMessage(text, isOutgoing) {
   div.innerHTML = '<div class="burn-icon">&#128293;</div>' + escapeHtml(text) + '<div class="time">' + time + '</div>';
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
-  
-  let burned = false;
-  const burnDelay = isOutgoing ? 5000 : 3000;
-  
-  const burnTimer = setTimeout(() => {
-    if (!burned && document.visibilityState === 'visible' && isElementInViewport(div)) {
-      burned = true;
-      div.classList.add('msg-burn');
-      setTimeout(() => div.remove(), 600);
-    } else if (!burned) {
-      delayedBurnTimers.push({element: div, delay: 2000});
+
+  const burnDelay = getBurnDelay(text);
+
+  if (isOutgoing) {
+    setTimeout(() => {
+      if (div.parentNode) {
+        div.classList.add('msg-burn');
+        setTimeout(() => div.remove(), 600);
+      }
+    }, burnDelay);
+  } else {
+    pendingBurns.push({
+      element: div,
+      burnDelay: burnDelay,
+      burnTimer: null,
+      viewed: false
+    });
+    checkAndBurn();
+  }
+}
+
+let pendingBurns = [];
+
+function checkAndBurn() {
+  const isPageVisible = document.visibilityState === 'visible';
+
+  pendingBurns = pendingBurns.filter(item => {
+    if (!item.element || !item.element.parentNode || item.element.classList.contains('msg-burn')) {
+      return false;
     }
-  }, burnDelay);
-  
-  if (!isOutgoing) {
-    unreadMessages.push({element: div, timer: burnTimer, delay: burnDelay, startTime: Date.now()});
-  }
-}
 
-let delayedBurnTimers = [];
-let unreadMessages = [];
+    const isVisible = isPageVisible && isElementInViewport(item.element);
 
-function isElementInViewport(el) {
-  const rect = el.getBoundingClientRect();
-  return rect.top >= 0 && rect.left >= 0 && rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) && rect.right <= (window.innerWidth || document.documentElement.clientWidth);
-}
+    if (isVisible && !item.viewed) {
+      item.viewed = true;
+      item.viewStartTime = Date.now();
+    }
 
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    processDelayedBurns();
-    processUnreadMessages();
-  }
-});
-
-window.addEventListener('focus', () => {
-  processDelayedBurns();
-  processUnreadMessages();
-});
-
-function processDelayedBurns() {
-  const now = Date.now();
-  delayedBurnTimers = delayedBurnTimers.filter(item => {
-    if (item.element && item.element.parentNode) {
-      item.delay -= 1000;
-      if (item.delay <= 0) {
+    if (item.viewed) {
+      const elapsed = Date.now() - item.viewStartTime;
+      if (elapsed >= item.burnDelay) {
         item.element.classList.add('msg-burn');
         setTimeout(() => item.element.remove(), 600);
         return false;
       }
     }
-    return false;
+
+    return true;
   });
 }
 
-function processUnreadMessages() {
-  const now = Date.now();
-  unreadMessages = unreadMessages.filter(item => {
-    if (item.element && item.element.parentNode && !item.element.classList.contains('msg-burn')) {
-      const elapsed = now - item.startTime;
-      if (elapsed >= item.delay) {
-        if (isElementInViewport(item.element)) {
-          item.element.classList.add('msg-burn');
-          setTimeout(() => item.element.remove(), 600);
-          return false;
-        }
-      }
-    }
-    return item.element && item.element.parentNode;
-  });
+function isElementInViewport(el) {
+  const rect = el.getBoundingClientRect();
+  return (
+    rect.top >= 0 && rect.left >= 0 &&
+    rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+    rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+  );
 }
 
-const observer = new IntersectionObserver((entries) => {
-  entries.forEach(entry => {
-    if (entry.isIntersecting) {
-      const msg = unreadMessages.find(m => m.element === entry.target);
-      if (msg && !msg.observed) {
-        msg.observed = true;
-        msg.startTime = Date.now();
-      }
-    }
-  });
-}, {threshold: 0.1});
+document.addEventListener('visibilitychange', checkAndBurn);
+window.addEventListener('focus', checkAndBurn);
+window.addEventListener('scroll', checkAndBurn);
+
+setInterval(checkAndBurn, 500);
 
 function escapeHtml(text) { const d = document.createElement('div'); d.textContent = text; return d.innerHTML; }
 
@@ -573,8 +565,6 @@ async function handleRemoteMessage(rawData) {
   try {
     const decrypted = await decryptAES(rawData, sharedSecret);
     addChatMessage(decrypted, false);
-    const lastMsg = document.querySelector('.msg-in:last-child');
-    if (lastMsg) observer.observe(lastMsg);
   } catch(e) { addSystemMessage('收到无法解密的消息'); }
 }
 
