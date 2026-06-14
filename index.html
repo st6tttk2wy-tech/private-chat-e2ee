@@ -187,16 +187,66 @@ function showToast(msg) {
 }
 
 function generateId(len) {
-  const arr = new Uint8Array(len || 16);
+  const arr = new Uint8Array(len || 8);
   crypto.getRandomValues(arr);
-  return btoa(String.fromCharCode(...arr)).replace(/[+/=]/g, c => ({'+':'-','/':'_','=':''}[c] || c));
+  return btoa(String.fromCharCode(...arr)).replace(/[+/=]/g, c => ({'+':'-','/':'_','=':''}[c] || c)).substring(0, len || 8);
+}
+
+function compressSDP(sdp) {
+  const lines = sdp.split('\r\n').filter(l => l);
+  const essential = [];
+  
+  for (const line of lines) {
+    if (line.startsWith('v=') || line.startsWith('o=') || line.startsWith('s=') || line.startsWith('t=')) {
+      essential.push(line);
+    } else if (line.startsWith('m=')) {
+      essential.push(line);
+    } else if (line.startsWith('a=group:')) {
+      essential.push(line);
+    } else if (line.startsWith('a=mid:')) {
+      essential.push(line);
+    } else if (line.startsWith('a=ice-ufrag:') || line.startsWith('a=ice-pwd:')) {
+      essential.push(line);
+    } else if (line.startsWith('a=fingerprint:')) {
+      essential.push(line);
+    } else if (line.startsWith('a=candidate:')) {
+      const parts = line.substring(12).split(' ');
+      if (parts[7] === 'host') {
+        essential.push('c:' + parts.slice(0, 8).join(' '));
+      }
+    } else if (line.startsWith('a=setup:')) {
+      essential.push(line);
+    } else if (line.startsWith('a=sctp-port:')) {
+      essential.push(line);
+    } else if (line.startsWith('a=max-message-size:')) {
+      essential.push(line);
+    }
+  }
+  return essential.join(';');
+}
+
+function decompressSDP(compressed) {
+  const lines = compressed.split(';').map(l => {
+    if (l.startsWith('c:')) return 'a=candidate:' + l.substring(2);
+    return l;
+  });
+  return lines.join('\r\n') + '\r\n';
+}
+
+function shortEncode(str) {
+  return btoa(unescape(encodeURIComponent(str))).replace(/[+/=]/g, c => ({'+':'-','/':'_','=':''}[c] || c));
+}
+
+function shortDecode(str) {
+  const decoded = str.replace(/[-_]/g, c => ({'-':'+','_':'/'}[c] || c));
+  return decodeURIComponent(escape(atob(decoded)));
 }
 
 async function encryptAES(data, key) {
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(key), 'PBKDF2', false, ['deriveKey']);
   const derivedKey = await crypto.subtle.deriveKey(
-    {name: 'PBKDF2', salt: enc.encode('pc-salt'), iterations: 100000, hash: 'SHA-256'},
+    {name: 'PBKDF2', salt: enc.encode('pc-s'), iterations: 50000, hash: 'SHA-256'},
     keyMaterial, {name: 'AES-GCM', length: 256}, false, ['encrypt']
   );
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -215,7 +265,7 @@ async function decryptAES(encStr, key) {
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(key), 'PBKDF2', false, ['deriveKey']);
   const derivedKey = await crypto.subtle.deriveKey(
-    {name: 'PBKDF2', salt: enc.encode('pc-salt'), iterations: 100000, hash: 'SHA-256'},
+    {name: 'PBKDF2', salt: enc.encode('pc-s'), iterations: 50000, hash: 'SHA-256'},
     keyMaterial, {name: 'AES-GCM', length: 256}, false, ['decrypt']
   );
   const decrypted = await crypto.subtle.decrypt({name: 'AES-GCM', iv}, derivedKey, data);
@@ -225,8 +275,8 @@ async function decryptAES(encStr, key) {
 function getBaseUrl() { return location.origin + location.pathname; }
 
 async function createRoom() {
-  const roomId = generateId(8);
-  sharedSecret = generateId(16);
+  const roomId = generateId(6);
+  sharedSecret = generateId(10);
   isHost = true;
 
   pc = new RTCPeerConnection(STUN_SERVERS);
@@ -246,10 +296,11 @@ async function createRoom() {
     setTimeout(resolve, 5000);
   });
 
-  const encryptedOffer = await encryptAES(JSON.stringify(pc.localDescription), sharedSecret);
-  const invitePayload = btoa(JSON.stringify({r: roomId, s: sharedSecret, o: encryptedOffer})).replace(/[+/=]/g, c => ({'+':'-','/':'_','=':''}[c] || c));
+  const compressedOffer = compressSDP(pc.localDescription.sdp);
+  const encryptedOffer = await encryptAES(compressedOffer, sharedSecret);
+  const invitePayload = roomId + '.' + sharedSecret + '.' + encryptedOffer;
 
-  const inviteLink = getBaseUrl() + '#invite=' + invitePayload;
+  const inviteLink = getBaseUrl() + '#i=' + invitePayload;
   document.getElementById('inviteLink').textContent = inviteLink;
   document.getElementById('inviteCode').value = invitePayload;
   showScreen('wait');
@@ -285,23 +336,22 @@ async function joinRoom() {
   let input = document.getElementById('joinInput').value.trim();
   if (!input) { showToast('请粘贴邀请信息'); return; }
 
-  if (input.includes('#invite=')) {
-    input = input.split('#invite=')[1];
+  if (input.includes('#i=')) {
+    input = input.split('#i=')[1];
   }
 
-  let payload;
-  try {
-    payload = JSON.parse(atob(input.replace(/[-_]/g, c => ({'-':'+','_':'/'}[c] || c))));
-    console.log('Payload decoded:', Object.keys(payload));
-  } catch(e) {
-    console.error('Decode error:', e);
+  const parts = input.split('.');
+  if (parts.length !== 3) {
     showToast('邀请信息格式错误');
     return;
   }
 
-  sharedSecret = payload.s;
+  const roomId = parts[0];
+  sharedSecret = parts[1];
+  const encryptedOffer = parts[2];
   isHost = false;
-  console.log('Secret set, creating RTCPeerConnection');
+
+  console.log('Parsed invite, creating RTCPeerConnection');
 
   pc = new RTCPeerConnection(STUN_SERVERS);
   pc.ondatachannel = (e) => {
@@ -317,16 +367,14 @@ async function joinRoom() {
   };
 
   try {
-    console.log('Decrypting offer, input length:', payload.o.length);
-    const decryptedOffer = await decryptAES(payload.o, sharedSecret);
-    console.log('Offer decrypted, length:', decryptedOffer.length);
-    console.log('Offer preview:', decryptedOffer.substring(0, 100));
-    const sdp = JSON.parse(decryptedOffer);
-    console.log('SDP parsed, type:', sdp.type);
-    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    console.log('Decrypting offer...');
+    const compressedSDP = await decryptAES(encryptedOffer, sharedSecret);
+    const sdp = decompressSDP(compressedSDP);
+    console.log('SDP decompressed, setting remote description');
+    await pc.setRemoteDescription(new RTCSessionDescription({type: 'offer', sdp: sdp}));
     console.log('Remote description set');
   } catch(e) {
-    console.error('Decryption error:', e.message, e.stack);
+    console.error('Error:', e);
     showToast('解密失败，请检查邀请码');
     return;
   }
@@ -342,8 +390,9 @@ async function joinRoom() {
   });
 
   console.log('Encrypting answer...');
-  const encryptedAnswer = await encryptAES(JSON.stringify(pc.localDescription), sharedSecret);
-  const replyCode = btoa(JSON.stringify({t: 'reply', a: encryptedAnswer})).replace(/[+/=]/g, c => ({'+':'-','/':'_','=':''}[c] || c));
+  const compressedAnswer = compressSDP(pc.localDescription.sdp);
+  const encryptedAnswer = await encryptAES(compressedAnswer, sharedSecret);
+  const replyCode = 'r.' + encryptedAnswer;
 
   document.getElementById('replyCode').textContent = replyCode;
   console.log('Showing join screen');
@@ -354,17 +403,17 @@ async function connectAsHost() {
   const input = document.getElementById('remoteAnswer').value.trim();
   if (!input) { showToast('请粘贴回复码'); return; }
 
-  let payload;
-  try {
-    payload = JSON.parse(atob(input.replace(/[-_]/g, c => ({'-':'+','_':'/'}[c] || c))));
-  } catch(e) {
+  if (!input.startsWith('r.')) {
     showToast('回复码格式错误');
     return;
   }
 
+  const encryptedAnswer = input.substring(2);
+
   try {
-    const decryptedAnswer = await decryptAES(payload.a, sharedSecret);
-    await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(decryptedAnswer)));
+    const compressedSDP = await decryptAES(encryptedAnswer, sharedSecret);
+    const sdp = decompressSDP(compressedSDP);
+    await pc.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: sdp}));
   } catch(e) {
     showToast('解密回复码失败');
     return;
@@ -435,8 +484,8 @@ function showBurnInfo() { showToast('阅后即焚：消息阅读后自动销毁'
 
 window.addEventListener('load', () => {
   const hash = location.hash;
-  if (hash.startsWith('#invite=')) {
-    document.getElementById('joinInput').value = decodeURIComponent(hash.substring(8));
+  if (hash.startsWith('#i=')) {
+    document.getElementById('joinInput').value = hash.substring(3);
     showTab('join');
     joinRoom();
   }
